@@ -1,0 +1,435 @@
+name: Build Boss Fights 3D
+on: workflow_dispatch
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: 8.9
+      - name: Check files
+        run: |
+          test -f bg.jpg || (echo "Upload bg.jpg first" && exit 1)
+          test -f game.html || (echo "Create game.html first" && exit 1)
+      - name: Generate project
+        run: |
+          B=bf3d
+          mkdir -p $B/app/src/main/java/com/mrd7/bossfights3d $B/app/src/main/res/drawable-nodpi $B/app/src/main/res/mipmap-xxxhdpi $B/app/src/main/assets
+
+          cat > $B/settings.gradle.kts << 'EOF'
+          pluginManagement {
+              repositories { google(); mavenCentral(); gradlePluginPortal() }
+          }
+          dependencyResolutionManagement {
+              repositories { google(); mavenCentral() }
+          }
+          rootProject.name = "BossFights3D"
+          include(":app")
+          EOF
+
+          cat > $B/build.gradle.kts << 'EOF'
+          plugins {
+              id("com.android.application") version "8.5.2" apply false
+              id("org.jetbrains.kotlin.android") version "1.9.24" apply false
+          }
+          EOF
+
+          cat > $B/gradle.properties << 'EOF'
+          android.useAndroidX=true
+          org.gradle.jvmargs=-Xmx2g
+          EOF
+
+          cat > $B/app/build.gradle.kts << 'EOF'
+          plugins {
+              id("com.android.application")
+              id("org.jetbrains.kotlin.android")
+          }
+          android {
+              namespace = "com.mrd7.bossfights3d"
+              compileSdk = 34
+              defaultConfig {
+                  applicationId = "com.mrd7.bossfights3d"
+                  minSdk = 26
+                  targetSdk = 34
+                  versionCode = 1
+                  versionName = "1.0"
+              }
+              compileOptions {
+                  sourceCompatibility = JavaVersion.VERSION_17
+                  targetCompatibility = JavaVersion.VERSION_17
+              }
+              kotlinOptions { jvmTarget = "17" }
+          }
+          dependencies {
+              implementation("androidx.core:core-ktx:1.13.1")
+          }
+          EOF
+
+          cat > $B/app/src/main/AndroidManifest.xml << 'EOF'
+          <?xml version="1.0" encoding="utf-8"?>
+          <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+              <uses-permission android:name="android.permission.INTERNET" />
+              <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
+              <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+              <application
+                  android:label="Boss Fights 3D"
+                  android:icon="@mipmap/ic_launcher"
+                  android:hardwareAccelerated="true"
+                  android:theme="@android:style/Theme.DeviceDefault.NoActionBar.Fullscreen">
+                  <activity
+                      android:name=".MainActivity"
+                      android:exported="true"
+                      android:screenOrientation="sensorLandscape">
+                      <intent-filter>
+                          <action android:name="android.intent.action.MAIN" />
+                          <category android:name="android.intent.category.LAUNCHER" />
+                      </intent-filter>
+                  </activity>
+                  <activity
+                      android:name=".GameActivity"
+                      android:exported="false"
+                      android:screenOrientation="sensorLandscape" />
+              </application>
+          </manifest>
+          EOF
+
+          cat > $B/app/src/main/java/com/mrd7/bossfights3d/MainActivity.kt << 'EOF'
+          package com.mrd7.bossfights3d
+
+          import android.app.Activity
+          import android.app.AlertDialog
+          import android.content.Intent
+          import android.graphics.Color
+          import android.graphics.Typeface
+          import android.os.Bundle
+          import android.text.InputType
+          import android.util.TypedValue
+          import android.view.Gravity
+          import android.view.View
+          import android.widget.Button
+          import android.widget.EditText
+          import android.widget.FrameLayout
+          import android.widget.ImageView
+          import android.widget.LinearLayout
+          import android.widget.ScrollView
+          import android.widget.TextView
+
+          class MainActivity : Activity() {
+              private var charId = 0
+              private val names = arrayOf("Blaze", "Shade", "Reach")
+
+              private fun dp(v: Int) = (v * resources.displayMetrics.density).toInt()
+
+              private fun fixDigits(s: String): String {
+                  val sb = StringBuilder()
+                  for (ch in s) {
+                      when (ch) {
+                          in '٠'..'٩' -> sb.append('0' + (ch - '٠'))
+                          '٫', '،', ',' -> sb.append('.')
+                          else -> sb.append(ch)
+                      }
+                  }
+                  return sb.toString()
+              }
+
+              private fun start(mode: String, ip: String) {
+                  startActivity(
+                      Intent(this, GameActivity::class.java)
+                          .putExtra("mode", mode)
+                          .putExtra("ip", ip)
+                          .putExtra("char", charId)
+                  )
+              }
+
+              private fun askIp() {
+                  val prefs = getSharedPreferences("bf", MODE_PRIVATE)
+                  val et = EditText(this)
+                  et.hint = "192.168.43.1"
+                  et.setText(prefs.getString("ip", "192.168.43.1"))
+                  et.inputType = InputType.TYPE_CLASS_TEXT
+                  AlertDialog.Builder(this)
+                      .setTitle("عنوان صديقك")
+                      .setMessage("اكتب العنوان الظاهر عند صديقك المستضيف")
+                      .setView(et)
+                      .setPositiveButton("انضمام") { _, _ ->
+                          val v = fixDigits(et.text.toString().trim())
+                          prefs.edit().putString("ip", v).apply()
+                          start("join", v)
+                      }
+                      .setNegativeButton("إلغاء", null)
+                      .show()
+              }
+
+              override fun onCreate(savedInstanceState: Bundle?) {
+                  super.onCreate(savedInstanceState)
+                  val dm = resources.displayMetrics
+                  val panelW = (maxOf(dm.widthPixels, dm.heightPixels) * 0.5f).toInt()
+                  val root = FrameLayout(this)
+                  root.layoutDirection = View.LAYOUT_DIRECTION_LTR
+                  root.setBackgroundColor(0xFF05060F.toInt())
+
+                  val img = ImageView(this)
+                  img.setImageResource(R.drawable.bg_image)
+                  img.scaleType = ImageView.ScaleType.FIT_START
+                  root.addView(img, FrameLayout.LayoutParams(-1, -1))
+
+                  val col = LinearLayout(this)
+                  col.orientation = LinearLayout.VERTICAL
+                  col.gravity = Gravity.CENTER
+                  col.setPadding(dp(24), dp(16), dp(24), dp(16))
+
+                  val title = TextView(this)
+                  title.text = "BOSS FIGHTS 3D"
+                  title.setTextColor(0xFFFFC857.toInt())
+                  title.setTextSize(TypedValue.COMPLEX_UNIT_SP, 32f)
+                  title.typeface = Typeface.DEFAULT_BOLD
+                  title.gravity = Gravity.CENTER
+                  col.addView(title)
+
+                  fun btn(text: String, onClick: (Button) -> Unit): Button {
+                      val b = Button(this)
+                      b.text = text
+                      b.setTextColor(Color.WHITE)
+                      b.setBackgroundColor(0xFF1E2140.toInt())
+                      b.setOnClickListener { onClick(b) }
+                      val lp = LinearLayout.LayoutParams(-1, -2)
+                      lp.topMargin = dp(10)
+                      col.addView(b, lp)
+                      return b
+                  }
+
+                  btn("الشخصية: " + names[0]) { b ->
+                      charId = (charId + 1) % 3
+                      b.text = "الشخصية: " + names[charId]
+                  }
+                  btn("استضافة (افتح الغرفة)") { start("host", "") }
+                  btn("انضمام (ادخل غرفة صديقك)") { askIp() }
+                  btn("تدريب ضد الكمبيوتر") { start("bot", "") }
+                  btn("المطوّر") {
+                      AlertDialog.Builder(this)
+                          .setTitle("المطوّر")
+                          .setMessage("مروان يوسف محمد سالم المعيطي\n\nالعقل المدبر والمصمم للعبة Boss Fights")
+                          .setPositiveButton("حسناً", null)
+                          .show()
+                  }
+
+                  val sv = ScrollView(this)
+                  sv.setBackgroundColor(0xCC000000.toInt())
+                  sv.addView(col)
+                  root.addView(sv, FrameLayout.LayoutParams(panelW, -1, Gravity.RIGHT))
+                  setContentView(root)
+              }
+          }
+          EOF
+
+          cat > $B/app/src/main/java/com/mrd7/bossfights3d/GameActivity.kt << 'EOF'
+          package com.mrd7.bossfights3d
+
+          import android.annotation.SuppressLint
+          import android.app.Activity
+          import android.graphics.Color
+          import android.os.Bundle
+          import android.view.View
+          import android.view.WindowManager
+          import android.webkit.WebView
+
+          class GameActivity : Activity() {
+              private lateinit var web: WebView
+              private var net: Net? = null
+
+              @SuppressLint("SetJavaScriptEnabled")
+              override fun onCreate(savedInstanceState: Bundle?) {
+                  super.onCreate(savedInstanceState)
+                  window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+                  hideBars()
+                  web = WebView(this)
+                  web.setBackgroundColor(Color.BLACK)
+                  web.settings.javaScriptEnabled = true
+                  web.settings.domStorageEnabled = true
+                  web.overScrollMode = View.OVER_SCROLL_NEVER
+                  val n = Net(
+                      this,
+                      web,
+                      intent.getStringExtra("mode") ?: "bot",
+                      intent.getStringExtra("ip") ?: "",
+                      intent.getIntExtra("char", 0)
+                  )
+                  net = n
+                  web.addJavascriptInterface(n, "Android")
+                  setContentView(web)
+                  web.loadUrl("file:///android_asset/game.html")
+              }
+
+              override fun onWindowFocusChanged(hasFocus: Boolean) {
+                  super.onWindowFocusChanged(hasFocus)
+                  if (hasFocus) hideBars()
+              }
+
+              override fun onDestroy() {
+                  net?.close()
+                  web.destroy()
+                  super.onDestroy()
+              }
+
+              private fun hideBars() {
+                  window.decorView.systemUiVisibility = (
+                      View.SYSTEM_UI_FLAG_FULLSCREEN or
+                      View.SYSTEM_UI_FLAG_HIDE_NAVIGATION or
+                      View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY or
+                      View.SYSTEM_UI_FLAG_LAYOUT_STABLE
+                  )
+              }
+          }
+          EOF
+
+          cat > $B/app/src/main/java/com/mrd7/bossfights3d/Net.kt << 'EOF'
+          package com.mrd7.bossfights3d
+
+          import android.app.Activity
+          import android.webkit.JavascriptInterface
+          import android.webkit.WebView
+          import java.io.BufferedReader
+          import java.io.InputStreamReader
+          import java.io.PrintWriter
+          import java.net.Inet4Address
+          import java.net.InetSocketAddress
+          import java.net.NetworkInterface
+          import java.net.ServerSocket
+          import java.net.Socket
+          import java.util.Collections
+          import java.util.concurrent.Executors
+
+          private fun localIps(): String {
+              val list = ArrayList<String>()
+              try {
+                  val en = NetworkInterface.getNetworkInterfaces() ?: return "?"
+                  for (ni in Collections.list(en)) {
+                      if (!ni.isUp || ni.isLoopback) continue
+                      for (a in Collections.list(ni.inetAddresses)) {
+                          if (a is Inet4Address && !a.isLoopbackAddress) list.add(a.hostAddress ?: "")
+                      }
+                  }
+              } catch (e: Exception) {
+              }
+              val pref = list.filter { it.startsWith("192.168") || it.startsWith("172.") }
+              val show = if (pref.isNotEmpty()) pref else list
+              return if (show.isEmpty()) "?" else show.joinToString("   |   ")
+          }
+
+          class Net(
+              private val act: Activity,
+              private val web: WebView,
+              private val mode: String,
+              private val ip: String,
+              private val ch: Int
+          ) {
+              private var sock: Socket? = null
+              private var server: ServerSocket? = null
+              @Volatile private var out: PrintWriter? = null
+              @Volatile private var closing = false
+              @Volatile private var connected = false
+              private val sender = Executors.newSingleThreadExecutor()
+
+              private fun js(type: String, data: String) {
+                  if (closing) return
+                  val d = data.replace("\\", "\\\\").replace("'", "\\'").replace("\n", " ")
+                  act.runOnUiThread {
+                      web.evaluateJavascript("window.onNet&&window.onNet('$type','$d')", null)
+                  }
+              }
+
+              @JavascriptInterface
+              fun params(): String {
+                  val safe = ip.filter { it in '0'..'9' || it == '.' }
+                  return "{\"mode\":\"$mode\",\"ip\":\"$safe\",\"char\":$ch}"
+              }
+
+              @JavascriptInterface
+              fun host() {
+                  js("ips", localIps())
+                  Thread {
+                      try {
+                          val ss = ServerSocket()
+                          ss.reuseAddress = true
+                          ss.bind(InetSocketAddress(5050))
+                          server = ss
+                          attach(ss.accept())
+                      } catch (e: Exception) {
+                          if (!connected && !closing) js("error", "تعذر فتح الغرفة")
+                      }
+                  }.start()
+              }
+
+              @JavascriptInterface
+              fun join(addr: String) {
+                  Thread {
+                      try {
+                          val s = Socket()
+                          s.connect(InetSocketAddress(addr, 5050), 6000)
+                          attach(s)
+                      } catch (e: Exception) {
+                          if (!connected && !closing) js("error", "تعذر الاتصال بـ $addr")
+                      }
+                  }.start()
+              }
+
+              private fun attach(s: Socket) {
+                  s.tcpNoDelay = true
+                  sock = s
+                  out = PrintWriter(s.getOutputStream(), true)
+                  connected = true
+                  js("connected", "")
+                  try {
+                      val r = BufferedReader(InputStreamReader(s.getInputStream()))
+                      while (true) {
+                          val line = r.readLine() ?: break
+                          js("line", line)
+                      }
+                  } catch (e: Exception) {
+                  }
+                  if (!closing) js("error", "انقطع الاتصال")
+              }
+
+              @JavascriptInterface
+              fun send(line: String) {
+                  try {
+                      sender.execute { try { out?.println(line) } catch (e: Exception) { } }
+                  } catch (e: Exception) {
+                  }
+              }
+
+              @JavascriptInterface
+              fun exit() {
+                  act.runOnUiThread { act.finish() }
+              }
+
+              fun close() {
+                  closing = true
+                  try { sock?.close() } catch (e: Exception) { }
+                  try { server?.close() } catch (e: Exception) { }
+                  try { sender.shutdownNow() } catch (e: Exception) { }
+              }
+          }
+          EOF
+
+          cp bg.jpg $B/app/src/main/res/drawable-nodpi/bg_image.jpg
+          cp game.html $B/app/src/main/assets/game.html
+          curl -fsSL --retry 3 -o $B/app/src/main/assets/three.min.js https://cdn.jsdelivr.net/npm/three@0.149.0/build/three.min.js
+          echo "window.BG='data:image/jpeg;base64,$(base64 -w0 bg.jpg)';" > $B/app/src/main/assets/bg.js
+          if [ -f icon.png ]; then
+            cp icon.png $B/app/src/main/res/mipmap-xxxhdpi/ic_launcher.png
+          else
+            sed -i '/android:icon/d' $B/app/src/main/AndroidManifest.xml
+          fi
+      - name: Build
+        working-directory: bf3d
+        run: gradle assembleDebug
+      - uses: actions/upload-artifact@v4
+        with:
+          name: BossFights3D-apk
+          path: bf3d/app/build/outputs/apk/debug/app-debug.apk
